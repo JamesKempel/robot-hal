@@ -2,6 +2,7 @@
 name = "robot-hal"
 version = "0.1.0"
 description = "Hardware abstraction layer: driver/controller discovery, motion execution and safety monitoring for ROS 2 arms"
+license = "Apache-2.0"
 # 3.10 is ROS 2 Humble's python, the oldest ROS LTS still in use on production robots
 requires-python = ">=3.10"
 # rclpy and the ROS message packages are not dependencies: on a robot they come from the sourced ROS install, and a pip

@@ -5,11 +5,12 @@ precision sensors on the network and over USB, and move the arm with a safety mo
 the way. It's a thin layer on top of `ros2_control`, not a replacement for it — detection goes through the controller
 manager's `list_controllers`, and motion goes through the arm's own `FollowJointTrajectory` controller.
 
-**Status:** `HardwareControllerInterface` (driver detection) and `sensor_discovery` (external sensor auto-detection)
-work standalone today, with nothing beyond a running `ros2_control` setup. `MotionExecutor` and `SafetyMonitor` are
-driver-agnostic by design, but they need a small adapter around your robot's URDF (a `Parser`, documented below) that
-this package doesn't ship a reference implementation of yet. If that's what's stopping you from using it, open an
-issue — a minimal implementation is a natural thing to add here.
+**Status:** everything here is usable standalone with nothing beyond a running `ros2_control` setup —
+`HardwareControllerInterface` (driver detection) and `sensor_discovery` (external sensor auto-detection) need no
+extra code at all, and `MotionExecutor`/`SafetyMonitor` need a URDF loaded through `robot_hal.parser.Parser`, shipped
+in this package. `Parser` covers a single arm bolted to the cell with single-axis joints — the common case. If your
+robot doesn't fit that (a non-fixed base, a multi-DOF joint), see **The Parser protocol** below for what to implement
+instead.
 
 ## What's in it
 
@@ -23,6 +24,7 @@ issue — a minimal implementation is a natural thing to add here.
 | `hardware_communication.ros_context` | Starts `rclpy` without its own signal handlers, so `SIGINT`/`SIGTERM` raise in the main thread instead of tearing down the context — the safe stop needs a working context to reach the controller manager. |
 | `hardware_communication.robot_status` | Watches a UR driver's `io_and_status_controller` for safety/robot mode and program state, so `MotionExecutor` notices a protective stop, pause or power-off as soon as the driver reports it, not just through the finish deadline. |
 | `hardware_communication.tool_frame_check` | Compares the URDF's `tool0` against the controller's own `tool0_controller` frame at the start pose, to catch a wrong robot variant or a joint zero offset before the first move. |
+| `parser` | Builds a Pinocchio model from a URDF (fixed base, single-axis joints) and the per-driver-type command formula `MotionExecutor`/`SafetyMonitor` need — the reference implementation of **The Parser protocol** below. |
 | `errors` | The shared error vocabulary: `motor_controller_errors` (driver detection/compatibility) and `safety_errors` (everything `SafetyMonitor` and `MotionExecutor` can raise). |
 
 ## Setup
@@ -77,9 +79,9 @@ This tells you a device is there and what's still missing (a fiducial, a pose es
 ### Move the robot, watched
 
 `MotionExecutor` and `SafetyMonitor` are driver-agnostic — they work against `DriverType.TORQUE` or
-`DriverType.POS_VELO` the same way — but both need a `parser`: a small adapter around your robot's URDF and
-[Pinocchio](https://github.com/stack-of-tasks/pinocchio) model. See **The Parser protocol** below for exactly what
-that needs to provide. Given one:
+`DriverType.POS_VELO` the same way — but both need a `parser`: an object wrapping your robot's URDF and
+[Pinocchio](https://github.com/stack-of-tasks/pinocchio) model (see **The Parser protocol** below for exactly what
+that is; `robot_hal.parser.Parser` is the reference implementation, used here):
 
 ```python
 import rclpy
@@ -87,12 +89,18 @@ from robot_hal import BackgroundExecutor, HardwareControllerInterface, MotionExe
 from robot_hal.hardware_communication.motion_executor import JointTrajectoryTransport
 from robot_hal.hardware_communication.ros_context import init_rclpy
 from robot_hal.hardware_communication.safety_monitor import JointStateListener, SafetyMonitor, build_safe_stop
+from robot_hal.parser import Parser
 
-init_rclpy()                                                # starts rclpy without its own signal handlers
+parser = Parser("my_robot.urdf")                            # add base_pose= for a wall- or ceiling-mounted arm
+
+init_rclpy()                                                 # starts rclpy without its own signal handlers
 node = rclpy.create_node("robot_hal_example")
 
 hardware = HardwareControllerInterface(node, joint_names=parser.joint_names)
-safe_stop = build_safe_stop(hardware, hardware.get_driver_type)   # works out how this robot can be stopped
+driver_type = hardware.get_driver_type                       # DriverType.POS_VELO or DriverType.TORQUE
+parser.generate_formulas(driver_type)                         # tip_frame= to measure somewhere other than tool0/flange
+
+safe_stop = build_safe_stop(hardware, driver_type)            # works out how this robot can be stopped
 safe_stop.connect()
 
 with BackgroundExecutor(node):
@@ -111,8 +119,7 @@ stops the robot first, before the exception propagates.
 ## The Parser protocol
 
 `SafetyMonitor` and `MotionExecutor` need an object (called `parser` in both) that wraps a URDF-derived
-[Pinocchio](https://github.com/stack-of-tasks/pinocchio) model and a per-driver-type command formula. This is the
-interface to implement for your own robot:
+[Pinocchio](https://github.com/stack-of-tasks/pinocchio) model and a per-driver-type command formula:
 
 ```python
 from typing import Protocol
@@ -149,9 +156,13 @@ class Parser(Protocol):
         """the inverse of to_model_tangent: Pinocchio's tangent space -> URDF joint order."""
 ```
 
-For a simple 6R arm with no unactuated or multi-DOF joints, `to_model_configuration`/`to_model_tangent`/`joint_part`
+`robot_hal.parser.Parser` implements exactly this, for a single arm bolted to the cell with single-axis joints
+(revolute, continuous, prismatic) — the common case for a ROS 2 arm, and probably all you need. Write your own only
+if your robot doesn't fit that: a non-fixed base (legs, wheels, thrusters), or a multi-DOF joint `/joint_states`
+can't report as one value per joint. For a simple 6R arm, `to_model_configuration`/`to_model_tangent`/`joint_part`
 are the identity (Pinocchio's model order already matches the URDF's), and the main work is `formulas.command`
-range-checking against `effort_limits` or `position_limits`/`velocity_limits` depending on `driver_type`.
+range-checking against `effort_limits` or `position_limits`/`velocity_limits` depending on `driver_type` — see
+`parser.py`'s `_build_formulas` for a worked example.
 
 ## Errors
 
@@ -161,6 +172,10 @@ Every error `robot_hal` raises comes from `robot_hal.errors` and is either a `mo
 `JointMappingError`, `RobotNotStillError`, `SafeStopUnconfiguredError`, `SafeStopFailedError`,
 `CalibrationAbortedError`, `ToolFramePlacementError`). Catch `CalibrationSafetyError` to handle any safety trip the
 same way; the message always says what was observed and why it tripped.
+
+## License
+
+[Apache License 2.0](LICENSE).
 
 ## Freedom commitments
 
