@@ -15,12 +15,7 @@ dependencies = [
 ros = ['ros-rclpy']
 
 [dependency-groups]
-# graph-calibration is a test-only convenience (a few HAL tests load a real URDF
-# through its URDFParser); robot_hal's own source code never imports it.
-dev = ['pytest', 'graph-calibration']
-
-[tool.uv.sources]
-graph-calibration = { workspace = true }
+dev = ['pytest']
 
 [build-system]
 requires = ["hatchling"]

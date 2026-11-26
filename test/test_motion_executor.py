@@ -4,7 +4,11 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from graph_calibration import URDFParser
+
+# graph_calibration is only present inside the monorepo workspace, not in a
+# standalone checkout of this package; skip rather than fail when it's absent.
+graph_calibration = pytest.importorskip("graph_calibration")
+URDFParser = graph_calibration.URDFParser
 from robot_hal.errors import (
     CalibrationAbortedError,
     ControllerDriversUnreachableError,

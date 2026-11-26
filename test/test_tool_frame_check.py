@@ -11,7 +11,11 @@ from types import SimpleNamespace
 import numpy as np
 import pinocchio as pin
 import pytest
-from graph_calibration import URDFParser
+
+# graph_calibration is only present inside the monorepo workspace, not in a
+# standalone checkout of this package; skip rather than fail when it's absent.
+graph_calibration = pytest.importorskip("graph_calibration")
+URDFParser = graph_calibration.URDFParser
 from robot_hal.errors import ToolFramePlacementError
 from robot_hal.hardware_communication.hardware_controller_interface import DriverType
 from robot_hal.hardware_communication.tool_frame_check import (
