@@ -1,0 +1,30 @@
+[project]
+name = "robot-hal"
+version = "0.1.0"
+description = "Hardware abstraction layer: driver/controller discovery, motion execution and safety monitoring for ROS 2 arms"
+# 3.10 is ROS 2 Humble's python, the oldest ROS LTS still in use on production robots
+requires-python = ">=3.10"
+# rclpy and the ROS message packages are not dependencies: on a robot they come from the sourced ROS install, and a pip
+# rclpy built for another ROS distro would shadow it. the library imports rclpy lazily, so it imports without ROS too.
+dependencies = [
+    'pin',
+]
+
+[project.optional-dependencies]
+# rclpy from PyPI, only for machines without a ROS install
+ros = ['ros-rclpy']
+
+[dependency-groups]
+# graph-calibration is a test-only convenience (a few HAL tests load a real URDF
+# through its URDFParser); robot_hal's own source code never imports it.
+dev = ['pytest', 'graph-calibration']
+
+[tool.uv.sources]
+graph-calibration = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/robot_hal"]
